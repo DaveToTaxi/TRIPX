@@ -40,6 +40,7 @@ export default function BookingScreen() {
   const { showAlert } = useAlert();
 
   const [step, setStep] = useState<Step>('route');
+  const [isConfirming, setIsConfirming] = useState(false);
   const [originInput, setOriginInput] = useState(draft.origin);
   const [destinationInput, setDestinationInput] = useState(draft.destination);
   const [isAirport, setIsAirport] = useState(draft.isAirport || true);
@@ -65,7 +66,7 @@ export default function BookingScreen() {
     }
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     updateDraft({
       origin: originInput,
       destination: `Madrid Barajas ${terminal}`,
@@ -77,12 +78,19 @@ export default function BookingScreen() {
       paymentMethod,
       priceClosed: estimatedPrice,
     });
-    const id = confirmBooking();
-    showAlert(
-      'Reserva confirmada',
-      `Tu traslado ha sido confirmado. David te contactará pronto.\n\nReferencia: ${id}`,
-      [{ text: 'Ver seguimiento', onPress: () => router.replace(`/tracking/${id}`) }]
-    );
+    setIsConfirming(true);
+    try {
+      const id = await confirmBooking();
+      showAlert(
+        'Reserva confirmada',
+        `Tu traslado ha sido confirmado. David te contactará pronto.\n\nReferencia: ${id}`,
+        [{ text: 'Ver seguimiento', onPress: () => router.replace(`/tracking/${id}`) }]
+      );
+    } catch (err: any) {
+      showAlert('Error', err.message ?? 'No se pudo crear la reserva. Inténtalo de nuevo.');
+    } finally {
+      setIsConfirming(false);
+    }
   };
 
   const STEP_LABELS = ['Ruta', 'Opciones', 'Precio'];
@@ -407,11 +415,12 @@ export default function BookingScreen() {
           <Text style={styles.bottomPrice}>{estimatedPrice}€ precio cerrado</Text>
         )}
         <Pressable
-          style={({ pressed }) => [styles.ctaBtn, pressed && { opacity: 0.88 }]}
+          style={({ pressed }) => [styles.ctaBtn, (pressed || isConfirming) && { opacity: 0.88 }]}
           onPress={step === 'price' ? handleConfirm : handleNext}
+          disabled={isConfirming}
         >
           <Text style={styles.ctaBtnText}>
-            {step === 'price' ? 'Confirmar reserva' : 'Continuar'}
+            {isConfirming ? 'Confirmando...' : step === 'price' ? 'Confirmar reserva' : 'Continuar'}
           </Text>
           <MaterialIcons
             name={step === 'price' ? 'check' : 'arrow-forward'}

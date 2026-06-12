@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,8 +10,10 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, Radius, Shadows } from '@/constants/theme';
-import { MOCK_DRIVER, MOCK_INCOMING_SERVICE } from '@/services/mockData';
+import { MOCK_DRIVER } from '@/services/mockData';
 import { useAlert } from '@/template';
+import { supabase } from '@/services/supabase';
+import { useAuth } from '@/hooks/useAuth';
 
 const MOTIVATIONAL_MSGS = {
   low: 'Día tranquilo — el aeropuerto mueve a las 17h. Posiciónate en T4.',
@@ -28,41 +30,120 @@ function getMotivation(trips: number, earnings: number): string {
 export default function DriverHomeScreen() {
   const insets = useSafeAreaInsets();
   const { showAlert } = useAlert();
-  const driver = MOCK_DRIVER;
-  const incoming = MOCK_INCOMING_SERVICE;
+  const { conductor } = useAuth();
+  const driver = { ...MOCK_DRIVER, name: conductor?.nombre ?? MOCK_DRIVER.name };
+  const conductorId = conductor?.id ?? '';
+  const sessionToken = conductor?.session_token ?? '';
 
   const [modoDia, setModoDia] = useState<'circuito_largo' | 'cortos_suaves'>(driver.modoDia);
   const [available, setAvailable] = useState(driver.isAvailable);
-  const [showIncoming, setShowIncoming] = useState(true);
-  const [countdown, setCountdown] = useState(incoming.expiresIn);
+  const [incoming, setIncoming] = useState<any>(null);
+  const [countdown, setCountdown] = useState(30);
+  const pendingReservaId = useRef<string | null>(null);
 
-  // Countdown for incoming service
+  // Supabase — carga pendientes existentes + escucha nuevas en tiempo real
   useEffect(() => {
-    if (!showIncoming) return;
+    if (!available) return;
+
+    const rowToIncoming = (row: any) => ({
+      id: row.reserva_id,
+      origin: row.origen,
+      destination: row.destino,
+      isAirport: /(barajas|t1|t2|t4)/i.test(row.destino ?? ''),
+      price: row.precio_estimado ?? 0,
+      clientName: row.nombre_cliente || 'Cliente',
+      clientTrips: 0,
+      clientCategory: 'normal',
+      estimatedKm: 0,
+      estimatedMinutes: 0,
+      timeToClient: 0,
+      assignmentScore: 0,
+      urgency: 'normal',
+      scheduledFor: row.hora_viaje ?? 'Ahora',
+      expiresIn: 30,
+    });
+
+    // Primero: busca reservas pendientes que ya existen
+    supabase
+      .from('reservas')
+      .select('*')
+      .eq('estado', 'pendiente')
+      .is('conductor_id', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0 && !pendingReservaId.current) {
+          pendingReservaId.current = data[0].reserva_id;
+          setIncoming(rowToIncoming(data[0]));
+          setCountdown(30);
+        }
+      });
+
+    // Luego: escucha nuevas que lleguen
+    const channel = supabase
+      .channel('driver-home-reservas')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reservas' }, (payload) => {
+        const row = payload.new as any;
+        if (row.estado === 'pendiente' && !pendingReservaId.current) {
+          pendingReservaId.current = row.reserva_id;
+          setIncoming(rowToIncoming(row));
+          setCountdown(30);
+        }
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [available]);
+
+  // Countdown cuando hay reserva entrante
+  useEffect(() => {
+    if (!incoming) return;
     const t = setInterval(() => {
       setCountdown(c => {
         if (c <= 1) {
           clearInterval(t);
-          setShowIncoming(false);
+          setIncoming(null);
+          pendingReservaId.current = null;
           return 0;
         }
         return c - 1;
       });
     }, 1000);
     return () => clearInterval(t);
-  }, [showIncoming]);
+  }, [incoming]);
+
+  const API_BASE = process.env.EXPO_PUBLIC_API_BASE ?? 'https://madridtaxis.es';
 
   const handleAccept = () => {
-    setShowIncoming(false);
+    if (!incoming) return;
+    const reservaId = pendingReservaId.current;
+    const snapshot = { ...incoming };
+    setIncoming(null);
+    pendingReservaId.current = null;
+    fetch(`${API_BASE}/api/reservas/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reserva_id: reservaId, conductor_id: conductorId, action: 'accept', session_token: sessionToken }),
+    }).then(r => r.json()).then(d => {
+      if (!d.ok) console.error('[DriverHome] accept error:', d.error);
+    }).catch(e => console.error('[DriverHome] accept fetch:', e));
     showAlert(
       'Servicio aceptado',
-      `Recogida en ${incoming.origin}\nCliente: ${incoming.clientName} · ${incoming.clientTrips} viajes\nPrecio: ${incoming.price}€`,
-      [{ text: 'Navegar', onPress: () => {} }]
+      `Recogida en ${snapshot.origin}\nPrecio: ${snapshot.price}€`,
+      [{ text: 'OK', onPress: () => {} }]
     );
   };
 
   const handleReject = () => {
-    setShowIncoming(false);
+    if (!incoming) return;
+    const reservaId = pendingReservaId.current;
+    setIncoming(null);
+    pendingReservaId.current = null;
+    fetch(`${API_BASE}/api/reservas/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reserva_id: reservaId, conductor_id: conductorId, action: 'reject', session_token: sessionToken }),
+    }).catch(e => console.error('[DriverHome] reject fetch:', e));
   };
 
   const motivation = getMotivation(driver.todayTrips, driver.todayEarnings);
@@ -157,7 +238,7 @@ export default function DriverHomeScreen() {
         </View>
 
         {/* Incoming service */}
-        {showIncoming && available && (
+        {incoming && available && (
           <View style={[styles.incomingCard, Shadows.gold]}>
             <View style={styles.incomingTop}>
               <View style={styles.incomingBadgeRow}>

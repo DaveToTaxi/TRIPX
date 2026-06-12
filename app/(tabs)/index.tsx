@@ -18,16 +18,18 @@ import { useAuth } from '@/hooks/useAuth';
 import { useBooking } from '@/hooks/useBooking';
 import { BOOKING_STATES } from '@/constants/config';
 import DriverHomeScreen from '@/components/feature/DriverHomeScreen';
+import PinLoginScreen from '@/components/feature/PinLoginScreen';
 
 const { width } = Dimensions.get('window');
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, conductor } = useAuth();
   const { activeBooking, updateDraft } = useBooking();
 
   if (user?.role === 'conductor') {
+    if (!conductor) return <PinLoginScreen />;
     return <DriverHomeScreen />;
   }
 

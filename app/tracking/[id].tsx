@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,19 @@ import { Colors, Typography, Spacing, Radius, Shadows } from '@/constants/theme'
 import { useBooking } from '@/hooks/useBooking';
 import { BOOKING_STATES } from '@/constants/config';
 import { useAlert } from '@/template';
+import { supabase } from '@/services/supabase';
+
+function supabaseEstadoToLocal(estado: string, conductorId: string | null): string {
+  if (estado === 'pendiente') return 'confirmada';
+  if (estado === 'confirmada' && conductorId) return 'conductor_confirmado';
+  if (estado === 'en_camino') return 'en_camino';
+  if (estado === 'llegando') return 'llegando';
+  if (estado === 'cliente_a_bordo') return 'cliente_a_bordo';
+  if (estado === 'en_ruta') return 'en_ruta';
+  if (estado === 'completada') return 'finalizada';
+  if (estado === 'cancelada') return 'cancelada';
+  return 'confirmada';
+}
 
 const ORDERED_STATES = [
   'solicitada',
@@ -45,10 +58,27 @@ export default function TrackingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { getBooking } = useBooking();
+  const { getBooking, updateBookingState } = useBooking();
   const { showAlert } = useAlert();
 
   const booking = getBooking(id);
+
+  useEffect(() => {
+    if (!id) return;
+    const channel = supabase
+      .channel(`tracking-${id}`)
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'reservas' },
+        (payload) => {
+          const row = payload.new as any;
+          if (row.reserva_id !== id) return;
+          const newState = supabaseEstadoToLocal(row.estado, row.conductor_id);
+          updateBookingState(id, newState);
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [id]);
 
   if (!booking) {
     return (

@@ -1,5 +1,24 @@
-import React, { createContext, useState, ReactNode } from 'react';
-import { Booking, MOCK_BOOKINGS } from '@/services/mockData';
+import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import { Booking } from '@/services/mockData';
+
+const STORAGE_KEY = 'onspace_bookings';
+
+function loadBookings(): Booking[] {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveBookings(bookings: Booking[]) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(bookings));
+    }
+  } catch {}
+}
 
 interface BookingDraft {
   origin: string;
@@ -32,16 +51,21 @@ interface BookingContextType {
   draft: BookingDraft;
   updateDraft: (updates: Partial<BookingDraft>) => void;
   resetDraft: () => void;
-  confirmBooking: () => string;
+  confirmBooking: () => Promise<string>;
   getBooking: (id: string) => Booking | undefined;
+  updateBookingState: (id: string, state: string) => void;
   activeBooking: Booking | null;
 }
 
 export const BookingContext = createContext<BookingContextType | undefined>(undefined);
 
 export function BookingProvider({ children }: { children: ReactNode }) {
-  const [bookings, setBookings] = useState<Booking[]>(MOCK_BOOKINGS);
+  const [bookings, setBookings] = useState<Booking[]>(loadBookings);
   const [draft, setDraft] = useState<BookingDraft>(DEFAULT_DRAFT);
+
+  useEffect(() => {
+    saveBookings(bookings);
+  }, [bookings]);
 
   const updateDraft = (updates: Partial<BookingDraft>) => {
     setDraft(prev => ({ ...prev, ...updates }));
@@ -51,17 +75,47 @@ export function BookingProvider({ children }: { children: ReactNode }) {
     setDraft(DEFAULT_DRAFT);
   };
 
-  const confirmBooking = (): string => {
-    const id = `TRX-2026-${String(bookings.length + 1).padStart(3, '0')}`;
+  const confirmBooking = async (): Promise<string> => {
+    const API_BASE = process.env.EXPO_PUBLIC_API_BASE ?? 'https://madridtaxis.es';
+    const scheduledDate = draft.scheduledFor
+      ? new Date(draft.scheduledFor)
+      : new Date(Date.now() + 2 * 60 * 60 * 1000);
+
+    const res = await fetch(`${API_BASE}/api/reservar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        origen: draft.origin,
+        destino: draft.destination,
+        fecha_viaje: scheduledDate.toISOString().slice(0, 10),
+        hora_viaje: scheduledDate.toTimeString().slice(0, 8),
+        pasajeros: draft.seats,
+        precio_estimado: draft.priceClosed,
+        tipo_precio: 'fijo',
+        tipo_servicio: 'programado',
+        telefono: '600000000',
+        origen_canal: 'app',
+        notas: `Maletas: ${draft.luggage} | Vehículo: ${draft.vehicleCategory} | Pago: ${draft.paymentMethod}`,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as any).error ?? 'Error al crear la reserva');
+    }
+
+    const data = await res.json();
+    const id: string = data.reserva_id ?? data.id_reserva;
+
     const newBooking: Booking = {
       id,
-      origin: draft.origin || 'Las Rozas, Calle Mayor 12',
-      destination: draft.destination || 'Madrid Barajas T4',
+      origin: draft.origin,
+      destination: draft.destination,
       isAirport: draft.isAirport,
       terminal: draft.terminal,
-      scheduledFor: draft.scheduledFor || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+      scheduledFor: scheduledDate.toISOString(),
       state: 'confirmada',
-      priceClosed: draft.priceClosed || 45,
+      priceClosed: draft.priceClosed,
       vehicleCategory: draft.vehicleCategory,
       seats: draft.seats,
       luggage: draft.luggage,
@@ -87,6 +141,10 @@ export function BookingProvider({ children }: { children: ReactNode }) {
 
   const getBooking = (id: string) => bookings.find(b => b.id === id);
 
+  const updateBookingState = (id: string, state: string) => {
+    setBookings(prev => prev.map(b => b.id === id ? { ...b, state: state as any } : b));
+  };
+
   const activeBooking = bookings.find(b =>
     !['finalizada', 'cerrada', 'cancelada'].includes(b.state)
   ) || null;
@@ -99,6 +157,7 @@ export function BookingProvider({ children }: { children: ReactNode }) {
       resetDraft,
       confirmBooking,
       getBooking,
+      updateBookingState,
       activeBooking,
     }}>
       {children}

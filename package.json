@@ -151,5 +151,8 @@
     "react-dev-inspector": "^2.0.1",
     "typescript": "~5.8.3"
   },
-  "private": true
+  "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": ["protobufjs", "react-native-elements", "unrs-resolver"]
+  }
 }
