@@ -1,5 +1,5 @@
 {
-  "buildCommand": "printf 'EXPO_PUBLIC_SUPABASE_URL=%s\\nEXPO_PUBLIC_SUPABASE_ANON_KEY=%s\\nEXPO_PUBLIC_API_BASE=%s\\nEXPO_PUBLIC_CONDUCTOR_ID=%s\\n' \"$EXPO_PUBLIC_SUPABASE_URL\" \"$EXPO_PUBLIC_SUPABASE_ANON_KEY\" \"$EXPO_PUBLIC_API_BASE\" \"$EXPO_PUBLIC_CONDUCTOR_ID\" > .env && npx expo export -p web",
+  "buildCommand": "npx expo export -p web",
   "outputDirectory": "dist",
   "framework": null,
   "rewrites": [
