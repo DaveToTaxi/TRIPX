@@ -126,9 +126,16 @@ export default function DriverHomeScreen() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reserva_id: reservaId, conductor_id: conductorId, action: 'accept', session_token: sessionToken }),
     }).then(r => r.json()).then(d => {
-      if (!d.ok) console.error('[DriverHome] accept error:', d.error);
-    }).catch(e => console.error('[DriverHome] accept fetch:', e));
-    setActiveRide({ ...snapshot, reservaId, estado: 'confirmada' });
+      if (d.ok) {
+        setActiveRide({ ...snapshot, reservaId, estado: 'confirmada' });
+      } else {
+        console.error('[DriverHome] accept error:', d.error, d.message);
+        showAlert('Error', d.message ?? d.error ?? 'No se pudo aceptar');
+      }
+    }).catch(e => {
+      console.error('[DriverHome] accept fetch:', e);
+      showAlert('Error de conexión', 'No se pudo contactar con el servidor');
+    });
   };
 
   const handleReject = () => {
