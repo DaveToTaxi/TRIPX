@@ -38,6 +38,7 @@ export default function DriverHomeScreen() {
   const [modoDia, setModoDia] = useState<'circuito_largo' | 'cortos_suaves'>(driver.modoDia);
   const [available, setAvailable] = useState(driver.isAvailable);
   const [incoming, setIncoming] = useState<any>(null);
+  const [activeRide, setActiveRide] = useState<any>(null);
   const [countdown, setCountdown] = useState(30);
   const pendingReservaId = useRef<string | null>(null);
 
@@ -127,11 +128,7 @@ export default function DriverHomeScreen() {
     }).then(r => r.json()).then(d => {
       if (!d.ok) console.error('[DriverHome] accept error:', d.error);
     }).catch(e => console.error('[DriverHome] accept fetch:', e));
-    showAlert(
-      'Servicio aceptado',
-      `Recogida en ${snapshot.origin}\nPrecio: ${snapshot.price}€`,
-      [{ text: 'OK', onPress: () => {} }]
-    );
+    setActiveRide({ ...snapshot, reservaId, estado: 'confirmada' });
   };
 
   const handleReject = () => {
@@ -307,6 +304,73 @@ export default function DriverHomeScreen() {
                 <MaterialIcons name="check" size={20} color={Colors.textInverse} />
                 <Text style={styles.acceptText}>{incoming.price}€ · Aceptar</Text>
               </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* Viaje activo */}
+        {activeRide && (
+          <View style={[styles.incomingCard, { borderColor: activeRide.estado === 'en_curso' ? Colors.success : Colors.primaryBorder }]}>
+            <View style={styles.incomingTop}>
+              <View style={styles.incomingBadgeRow}>
+                <View style={[styles.airportBadge, { backgroundColor: activeRide.estado === 'en_curso' ? Colors.success : Colors.primary }]}>
+                  <MaterialIcons name={activeRide.estado === 'en_curso' ? 'directions-car' : 'check-circle'} size={12} color={Colors.textInverse} />
+                  <Text style={styles.airportBadgeText}>
+                    {activeRide.estado === 'en_curso' ? 'EN RUTA' : 'ACEPTADO'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.primary }}>{activeRide.price}€</Text>
+            </View>
+            <View style={styles.incomingRoute}>
+              <View style={styles.incomingRoutePoint}>
+                <View style={styles.incomingDot} />
+                <Text style={styles.incomingOrigin} numberOfLines={1}>{activeRide.origin}</Text>
+              </View>
+              <View style={styles.incomingLine} />
+              <View style={styles.incomingRoutePoint}>
+                <MaterialIcons name="flight-takeoff" size={14} color={Colors.primary} />
+                <Text style={styles.incomingDest} numberOfLines={1}>{activeRide.destination}</Text>
+              </View>
+            </View>
+            <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 4 }}>Cliente: {activeRide.clientName}</Text>
+            <View style={styles.incomingActions}>
+              {activeRide.estado === 'confirmada' && (
+                <Pressable
+                  style={({ pressed }) => [styles.acceptBtn, { flex: 1 }, pressed && { opacity: 0.88 }]}
+                  onPress={() => {
+                    fetch(`${API_BASE}/api/reservas/iniciar`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ reserva_id: activeRide.reservaId, conductor_id: conductorId, session_token: sessionToken }),
+                    }).then(r => r.json()).then(d => {
+                      if (d.ok) setActiveRide((r: any) => ({ ...r, estado: 'en_curso' }));
+                      else console.error('[DriverHome] iniciar:', d.error);
+                    }).catch(e => console.error('[DriverHome] iniciar fetch:', e));
+                  }}
+                >
+                  <MaterialIcons name="directions-car" size={20} color={Colors.textInverse} />
+                  <Text style={styles.acceptText}>Iniciar viaje</Text>
+                </Pressable>
+              )}
+              {activeRide.estado === 'en_curso' && (
+                <Pressable
+                  style={({ pressed }) => [styles.acceptBtn, { flex: 1, backgroundColor: Colors.success }, pressed && { opacity: 0.88 }]}
+                  onPress={() => {
+                    fetch(`${API_BASE}/api/reservas/finalizar`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ reserva_id: activeRide.reservaId, conductor_id: conductorId, session_token: sessionToken }),
+                    }).then(r => r.json()).then(d => {
+                      if (d.ok) setActiveRide(null);
+                      else console.error('[DriverHome] finalizar:', d.error);
+                    }).catch(e => console.error('[DriverHome] finalizar fetch:', e));
+                  }}
+                >
+                  <MaterialIcons name="flag" size={20} color={Colors.textInverse} />
+                  <Text style={styles.acceptText}>Finalizar viaje</Text>
+                </Pressable>
+              )}
             </View>
           </View>
         )}
