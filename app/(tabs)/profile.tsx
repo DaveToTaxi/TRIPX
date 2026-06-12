@@ -14,7 +14,7 @@ import { APP_CONFIG } from '@/constants/config';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
-  const { user, switchRole } = useAuth();
+  const { user, switchRole, logout, conductor } = useAuth();
 
   const isDriver = user?.role === 'conductor';
 
@@ -108,6 +108,17 @@ export default function ProfileScreen() {
             </Pressable>
           </View>
         </View>
+
+        {/* Cerrar sesión conductor */}
+        {conductor && (
+          <Pressable
+            style={({ pressed }) => [styles.logoutBtn, pressed && { opacity: 0.7 }]}
+            onPress={() => { logout(); switchRole('pasajero'); }}
+          >
+            <MaterialIcons name="logout" size={18} color={Colors.error} />
+            <Text style={styles.logoutText}>Cerrar sesión conductor</Text>
+          </Pressable>
+        )}
 
         {/* Settings */}
         <View style={styles.section}>
@@ -262,6 +273,12 @@ const styles = StyleSheet.create({
   roleBtnText: { fontSize: Typography.sm, color: Colors.textMuted, fontWeight: Typography.medium },
   roleBtnTextActive: { color: Colors.primary, fontWeight: Typography.semibold },
   roleBtnTextDriver: { color: Colors.warning, fontWeight: Typography.semibold },
+  logoutBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.md,
+    borderWidth: 1, borderColor: Colors.error, backgroundColor: Colors.errorMuted,
+  },
+  logoutText: { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.error },
 
   menuItem: {
     flexDirection: 'row',
