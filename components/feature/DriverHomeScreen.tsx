@@ -40,11 +40,13 @@ export default function DriverHomeScreen() {
   const [incoming, setIncoming] = useState<any>(null);
   const [activeRide, setActiveRide] = useState<any>(null);
   const [countdown, setCountdown] = useState(30);
+  const [rechazadas, setRechazadas] = useState<any[]>([]);
+  const [mostrarRechazadas, setMostrarRechazadas] = useState(false);
   const pendingReservaId = useRef<string | null>(null);
 
   // Supabase — carga pendientes existentes + escucha nuevas en tiempo real
   useEffect(() => {
-    if (!available) return;
+    if (!available || !conductorId) return;
 
     const rowToIncoming = (row: any) => ({
       id: row.reserva_id,
@@ -64,12 +66,13 @@ export default function DriverHomeScreen() {
       expiresIn: 30,
     });
 
-    // Primero: busca reservas pendientes que ya existen
+    // Pendientes que yo NO rechacé
     supabase
       .from('reservas')
       .select('*')
       .eq('estado', 'pendiente')
       .is('conductor_id', null)
+      .not('rechazado_por', 'cs', `{${conductorId}}`)
       .order('created_at', { ascending: true })
       .limit(1)
       .then(({ data }) => {
@@ -80,21 +83,42 @@ export default function DriverHomeScreen() {
         }
       });
 
-    // Luego: escucha nuevas que lleguen
+    // Pendientes que yo rechacé — para poder recuperarlas
+    supabase
+      .from('reservas')
+      .select('*')
+      .eq('estado', 'pendiente')
+      .is('conductor_id', null)
+      .contains('rechazado_por', [conductorId])
+      .order('created_at', { ascending: true })
+      .then(({ data }) => {
+        if (data) setRechazadas(data.map(rowToIncoming));
+      });
+
     const channel = supabase
       .channel('driver-home-reservas')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reservas' }, (payload) => {
         const row = payload.new as any;
         if (row.estado === 'pendiente' && !pendingReservaId.current) {
-          pendingReservaId.current = row.reserva_id;
-          setIncoming(rowToIncoming(row));
-          setCountdown(30);
+          const rechazadaPor: string[] = row.rechazado_por ?? [];
+          if (!rechazadaPor.includes(conductorId)) {
+            pendingReservaId.current = row.reserva_id;
+            setIncoming(rowToIncoming(row));
+            setCountdown(30);
+          }
+        }
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'reservas' }, (payload) => {
+        const row = payload.new as any;
+        // Si una reserva rechazada ya no está pendiente, sacarla de la lista
+        if (row.estado !== 'pendiente') {
+          setRechazadas(prev => prev.filter(r => r.id !== row.reserva_id));
         }
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [available]);
+  }, [available, conductorId]);
 
   // Countdown cuando hay reserva entrante
   useEffect(() => {
@@ -141,13 +165,23 @@ export default function DriverHomeScreen() {
   const handleReject = () => {
     if (!incoming) return;
     const reservaId = pendingReservaId.current;
+    const snapshot = { ...incoming };
     setIncoming(null);
     pendingReservaId.current = null;
+    setRechazadas(prev => prev.some(r => r.id === snapshot.id) ? prev : [snapshot, ...prev]);
     fetch(`${API_BASE}/api/reservas/accept`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reserva_id: reservaId, conductor_id: conductorId, action: 'reject', session_token: sessionToken }),
     }).catch(e => console.error('[DriverHome] reject fetch:', e));
+  };
+
+  const handleRecover = (reserva: any) => {
+    if (pendingReservaId.current) return;
+    setRechazadas(prev => prev.filter(r => r.id !== reserva.id));
+    pendingReservaId.current = reserva.id;
+    setIncoming(reserva);
+    setCountdown(30);
   };
 
   const motivation = getMotivation(driver.todayTrips, driver.todayEarnings);
@@ -379,6 +413,41 @@ export default function DriverHomeScreen() {
                 </Pressable>
               )}
             </View>
+          </View>
+        )}
+
+        {/* Servicios rechazados recuperables */}
+        {rechazadas.length > 0 && !incoming && available && (
+          <View style={styles.recoverySection}>
+            <Pressable
+              style={styles.recoveryHeader}
+              onPress={() => setMostrarRechazadas(m => !m)}
+            >
+              <MaterialIcons name="undo" size={16} color={Colors.textMuted} />
+              <Text style={styles.recoveryHeaderText}>
+                {rechazadas.length} {rechazadas.length === 1 ? 'servicio rechazado' : 'servicios rechazados'}
+              </Text>
+              <MaterialIcons
+                name={mostrarRechazadas ? 'expand-less' : 'expand-more'}
+                size={18}
+                color={Colors.textMuted}
+              />
+            </Pressable>
+            {mostrarRechazadas && rechazadas.map(r => (
+              <View key={r.id} style={styles.recoveryItem}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.recoveryOrigin} numberOfLines={1}>{r.origin}</Text>
+                  <Text style={styles.recoveryDest} numberOfLines={1}>{r.destination}</Text>
+                </View>
+                <Text style={styles.recoveryPrice}>{r.price}€</Text>
+                <Pressable
+                  style={({ pressed }) => [styles.recoveryBtn, pressed && { opacity: 0.75 }]}
+                  onPress={() => handleRecover(r)}
+                >
+                  <Text style={styles.recoveryBtnText}>Recuperar</Text>
+                </Pressable>
+              </View>
+            ))}
           </View>
         )}
 
@@ -648,4 +717,40 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
   },
   maintBtnText: { fontSize: Typography.xs, fontWeight: Typography.bold, color: Colors.textInverse },
+
+  recoverySection: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  recoveryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    padding: Spacing.sm,
+  },
+  recoveryHeaderText: { flex: 1, fontSize: Typography.sm, color: Colors.textMuted },
+  recoveryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  recoveryOrigin: { fontSize: Typography.xs, color: Colors.textMuted },
+  recoveryDest: { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.textPrimary },
+  recoveryPrice: { fontSize: Typography.sm, fontWeight: Typography.bold, color: Colors.textPrimary },
+  recoveryBtn: {
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  recoveryBtnText: { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.textPrimary },
 });
